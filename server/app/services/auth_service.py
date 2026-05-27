@@ -1,8 +1,10 @@
 import uuid, logging
 from fastapi import HTTPException, status
+from fastapi.concurrency import run_in_threadpool
 from aiosqlite import IntegrityError
 from app.core.security import hash_password, verify_password
-from app.schemas.user import UserCreate, UserOut
+from app.schemas.user import UserOut
+from app.db.transaction import transaction
 
 logger = logging.getLogger(__name__)
 class AuthService:
@@ -11,17 +13,29 @@ class AuthService:
 
     async def register_user(self, email: str, password: str) -> UserOut:
         try:
-            user_id = str(uuid.uuid4())
-            hashed_password = hash_password(password)
-            
-            await self.db.execute("INSERT INTO users (id, email, hashed_password) VALUES (?, ?, ?)", (user_id, email, hashed_password))
-            await self.db.commit()
+            # Use a transaction to handle commit/rollback automatically
+            async with transaction(self.db):
+                user_id = str(uuid.uuid4())
+                hashed_password = await run_in_threadpool(hash_password, password)
 
-            cursor = await self.db.execute("SELECT created_at FROM users WHERE id = ?", (user_id,))
-            row = await cursor.fetchone()
-            await cursor.close()
+                await self.db.execute(
+                    "INSERT INTO users (id, email, hashed_password) VALUES (?, ?, ?)",
+                    (user_id, email, hashed_password)
+                )
 
-            return UserOut(id=user_id, email=email, created_at=row['created_at'])
+                cursor = await self.db.execute(
+                    "SELECT created_at FROM users WHERE id = ?",
+                    (user_id,)
+                )
+
+                row = await cursor.fetchone()
+                await cursor.close()
+
+                if row is None:
+                    # This will trigger rollback automatically
+                    raise RuntimeError("Inserted user could not be reloaded")
+
+                return UserOut(id=user_id, email=email, created_at=row['created_at'])
         except IntegrityError as e:
             logger.warning(f"User registration failed - duplicate email: {e}")
             raise HTTPException(
@@ -46,7 +60,7 @@ class AuthService:
                 detail="Incorrect email or password"
             )
         
-        is_valid_password = verify_password(password, user['hashed_password'])
+        is_valid_password = await run_in_threadpool(verify_password, password, user['hashed_password'])
 
         if not is_valid_password:
             raise HTTPException(
