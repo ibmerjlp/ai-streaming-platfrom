@@ -18,7 +18,10 @@ class UserCreate(BaseModel):
                 "uppercase, lowercase, number, and special character"
             )
         return value
-
+    
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
 class UserOut(BaseModel):
     id: str
     email: EmailStr

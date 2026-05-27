@@ -40,16 +40,10 @@ class AuthService:
         user = await cursor.fetchone()
         await cursor.close()
 
-        if user is None:
+        if user is None or user['is_active'] == 0:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect email or password"
-            )
-        
-        if user['is_active'] == 0:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="User account is inactive"
             )
         
         is_valid_password = verify_password(password, user['hashed_password'])
